@@ -6,7 +6,7 @@
 
 ### MAC Layer Functions
 
-||| Just for reference
+| Just for reference
 
 from PCI-SIG standards with OSI architecture reference, MAC layer is generally responsible for:
 
@@ -93,44 +93,135 @@ signal.
 ### Interface Summary
 
  + TX side
-  - TxData: 8/16/32 bit width
-  - TxD/K : Indicates whether packet is data/control
-  - Commands group:
-   + TxdetectRx   : Begin receiver detection
-   + PipeWidth    : Indicates data width
-   + PipeRate     : Indicates link speed
-   + TxDataValid  : Indicates valid data is present
-   + PwrDown      : Indicates various power management states
-   + TxCompliance : For compliance pattern test
-   + ResetPhy     : Physical layer reset signal
+   - TxData: 8/16/32 bit width
+   - TxD/K : Indicates whether packet is data/control
+   - Commands group:
+     + TxdetectRx   : Begin receiver detection
+     + PipeWidth    : Indicates data width
+     + PipeRate     : Indicates link speed
+     + TxDataValid  : Indicates valid data is present
+     + PwrDown      : Indicates various power management states
+     + TxCompliance : For compliance pattern test
+     + ResetPhy     : Physical layer reset signal
    
  + RX side
-  - RxData : 8/16/32 bit width
-  - RxD/K  : Indicates whether received packet is data/control character
-  - Status group: 5 bit status signal from PHY to MAC
-   + PHY obtained symbol lock
-   + PHY completed various PM states
-   + Received data is valid
-   + PHY detected receiver
-   + PHY detected Electrical Idle on link 
+   - RxData : 8/16/32 bit width
+   - RxD/K  : Indicates whether received packet is data/control character
+   - Status group: 5 bit status signal from PHY to MAC
+     + PHY obtained symbol lock
+     + PHY completed various PM states
+     + Received data is valid
+     + PHY detected receiver
+     + PHY detected Electrical Idle on link 
 
 ### Relationship between Phy clock rate and Link Speed
 
-** GEN1 **
 
-|  PIPE DATA WIDTH  |   PHY CLOCK RATE (MHz)  | LINK SPPED(GEN1) | 
-| ----------------- | ------------------------------------------ | 
-| 8                 | 250                     | 2.5 GT/s         | 
-| 16                | 125                     | 2.5 GT/s         | 
-| 32                | 62.5                    | 2.5 GT/s         | 
+ |  PIPE DATA WIDTH  |   PHY CLOCK RATE (MHz)  | LINK SPPED(GEN1) |
+ | ----------------- | ------------------------------------------ |
+ | 8                 | 250                     | 2.5 GT/s         |
+ | 16                | 125                     | 2.5 GT/s         |
+ | 32                | 62.5                    | 2.5 GT/s         | 
 
-** GEN2 **
 
-|  PIPE DATA WIDTH  |   PHY CLOCK RATE (MHz)  | LINK SPPED(GEN2) |
-| ----------------- | ------------------------------------------ |
-| 8                 | 250                     |  5 GT/s (GEN2)   |
-| 16                | 125                     |  5 GT/s (GEN2)   |
-| 32                | 62.5                    |  5 GT/s (GEN2)   |
+ |  PIPE DATA WIDTH  |   PHY CLOCK RATE (MHz)  | LINK SPPED(GEN2) |
+ | ----------------- | ------------------------------------------ |
+ | 8                 | 250                     |  5 GT/s (GEN2)   |
+ | 16                | 125                     |  5 GT/s (GEN2)   |
+ | 32                | 62.5                    |  5 GT/s (GEN2)   |
+ 
+A. Data Link Layer Transmitter
+The transmitter receives TLPs from the Transaction Layer and it sends them to the Physical Layer with a sequence number that identifies each TLP and a CRC, The transmitter is the responsible of the retransmission of TLPs if necessary, and it sends the DLLPs that are generated in the Data Link Layer. The transmitter architecture is shown in the Fig. 5.
+
+1) Next Transmit Seq
+This module stores the Sequence number that will be added at the beginning of the next TLP to transmit. The sequence number is a 12 bit number, and it increases when the transmission of a TLP occurs. This counter sends the sequence number before a TLP is dispatched by the Transaction Layer. During the transmission, it sends two bytes; first, it sends four reserved bits (0's) as the more significant nibble and the 4 upper bits of the sequence number as the less significant nibble, after that, it sends the second byte with the lower bits of the sequence number. Besides, the Next Transmit Seq sends its value to the Retry buffer for a future reference if the TLP has to be retransmitted.
+
+2) Lcrc Calculator
+This module calculates a 32-bit CRC. The LCRC value is added to the tail of the TLP. This module sends the LCRC value in four bytes after the Transaction Layer sends the last byte of the TLP.
+
+The calculation of the LCRC starts when the Data Link Layer sends the Sequence number, it continues with the transmission of the TLP, and it finishes when the transaction layer sends the last symbol of the TLP.
+
+This module has a parallelization of a diagram that originally shows a serial realization. This diagram can be checked out in [1]. This parallelization permits the calculus of the LCRC every single clock signal for every byte transmitted.
+
+The parallelization consists of 32 equations each one corresponding to every bit in the LCRC value. These equations were obtained through the analysis of the results of One byte of data inserted to the diagram mentioned above. This was based on some basics of discrete signals, for reference check [3].
+
+3) Tlp Mux
+This module permits the flow of data into the Data Link Layer for storing in the Retry Buffer and to pass them to the Physical Layer. The data, which passes through this block, corresponds first, to the Sequence number, then to the TLP payload, and finally to the LCRC value. This module is controlled by the sub module receiving of the Retry Buffer.
+
+4) Retry Buffer
+This module stores the TLPs which are transmitted to the Physical Layer. When it is necessary, the Retry Buffer retransmits the stored TLPs that are unacknowledged,
+
+This module has four fundamental blocks, which are: Receiving, Sending, Pointers Manager and the Buffer memory. The Architecture of the Retry buffer is shown in the Fig. 6.
+
+Receiving: This sub module coordinates the acceptance of any incoming TLP, that iS, it controls the module TLP mux and sets the Pointers Manager. When a TLP is being received, the Pointers Manager is updated and the receiving sub module addresses the Buffer memory for storing.
+
+Sending: This sub module coordinates the retransmission of the TLPs that are unacknowledged. This sub module takes the addresses from the Pointers manager to determine the start and end of every unacknowledged TLP, and it addresses the Buffer Memory for the retransmission.
+
+Pointers Manager: This sub module stores the addresses of start and end of every TLP stored. It stores the address of the oldest TLP stored as the first TLP to retransmit, and it updates this address when a TLP acknowledged arrived. The Pointers Manager can store a maximum of 8 addresses. The number of TLPs that can be stored depends of the Buffer Memory space available. So it is not necessarily equal to 8.
+
+Buffer Memory: This sub module stores the TLPs that are transmitted and remain there until they are acknowledged. The sizing of the Buffer Memory was determined considering the Maximum payload of the TLP, which is 4096 bytes.
+
+The Retry Buffer is the most complex module of the Data Link Layer’ s transmitter, and it is the core of the transmitter architecture. It coordinates the transmission and retransmissions of the TLP and it generates signals that help to control the flow of TLPs from the Transaction Layer and to the Physical Layer.
+
+5) Replay Timer
+This timer counts the amount of time that elapses since transmission or retransmission of the last symbol of TLPs. If the Replay Timer times out, the Retry buffer starts a retransmission of the unacknowledged TLPs. The maximum TLP payload is 4096 bytes, and that produces that the size of the Replay Timer come 12 429 bytes. For reference see [1].
+
+6) Replay Num
+This module counts the number of retransmissions that occur. It counts from 00b to 11 b. When the Replay num rolls over 11b b to 00b the Data Link Layer indicates to the Physical Layer to retrain the Link.
+
+7) CRC Calculator
+This module generates a 16 bit CRC. which corresponds to a DLLP. The CRC Calculator sends one byte every clock signal after the transmission of the DLLP. First sends the more significant byte.
+
+Like the LCRC Calculator, the CRC calculator has a parallelization of a diagram that originally shows a serial realization. This diagram can be checked out in [1]. This parallelization permits the calculus of the CRC every single clock signal for every byte transmitted. The diagram of the CRC calculator is different from the LCRC calculator.
+
+The parallelization consists of 16 equations each one corresponding to every bit in the CRC value. These equations were obtained through the analysis of the results of one byte of data inserted to the diagram mentioned above. This was based on some basics of discrete signals, for reference check [3].
+
+8) Dlip Mux
+This module is controlled by the Control module, and its main responsibility is to permit the data flow that correspond to a DLLP. When the Data Link Layer wants to send a OLLP, first, it sends the DLLP payload through the DLLP mux, and next, it sends the CRC value of the DLLP that has been transmitted.
+
+####  Data Link Layer Control
+
+This module has four main functional blocks．
+
+##### Link Status Management
+It implements the Data Link Control State Machine, which serves to indicate to the Transaction Layer the state of the Link and indicates to the Physical Layer if a retrain of the Link is needed.
+
+Data Link Control State Machine, as shown below with the following parameters:
+
+States:
+Inactive: Physical Layer reporting that link is nonoperational or nothing is connected.
+Init: Physical Layer reports that link is operational, initialize flow control for the default virtual channel
+Active: normal operation mode.
+
+Status Outputs:
+Down: Data Link Layer is not communicating with the component on the other side of the link.
+UP: Data Link Layer is communicating with the component on the other side of the link.
+
+##### Flow Control
+
+Flow Control synchronizes the data flow between the Transaction Layer and Data Link, and between the Data Link Layer and Physical Layer in both ways transmitting and receiving.
+
+To receive TLPs from the Transaction Layer there must be enough space in the Retry Buffer, and it considers that any retransmission of TLP or a transmission of DLLP is not occurring at that moment. If any of these events are happening, the transmission of any TLP from the Transaction Layer cannot be executed.
+
+To send data to the Physical Layer, it must be authorized by the Physical Layer.
+
+To receive data from the Physical Layer, there must be enough space in the Rx buffer for TLPs, or in the module of Manage of DLLP for DLLPs for its further processing.
+
+To send a TLP to the Transaction Layer, it must be authorized by the Transaction Layer.
+
+If the link status is down, there is not data flow between layers.
+
+##### Dllp Manager
+
+The module of Control, manages the reception and transmission of the DLLPs. If an Ack or Nak DLLP has been received, then the DLLP Manager module passes the sequence number of the TLP acknowledged or unacknowledged to the Ack/Nak notifications.
+
+The DLLP Manager module forms DLLPs, schedules and transmits a DLLP to the other component on the Link.
+
+Because this module has the function of the transmission of the DLLPs, this module has the functionality of manager the control of the module Transmit mux.
+
+##### Ack/nak Notifications
+This module notifies to the Retry Buffer the TLPs acknowledged or unacknowledged in the receiver, for the update of the pointers in the sub module Pointers manager in the Data Link Layer transmitter.
+
 
 
 #### Link Initialization and Training
